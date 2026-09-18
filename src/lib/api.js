@@ -1,9 +1,9 @@
 // frontend/src/lib/api.js
 //
-// Talks to the SafeScan SA backend (Web-Checker-Backend), not CyberCheck's -
-// that backend has no domain-verification step, which SafeScan requires
-// (AC-004: a scan cannot start without proven technical control of the
-// domain). See VerifyStep.js for the added step this implies.
+// Talks to the SafeScan SA backend (Web-Checker-Backend). That backend also exposes
+// /api/verification (DNS TXT domain-control proof), but scanning doesn't require it -
+// a deliberate product decision (see the backend's docs/security.md) - so this frontend
+// never calls it, and there's no verify step in the UI.
 
 const ENV_BACKEND =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_BACKEND_URL) ||
@@ -85,14 +85,6 @@ async function request(path, { method = "GET", body, signal } = {}) {
     });
   }
   return parsed.data;
-}
-
-export function createVerification(domain, { signal } = {}) {
-  return request("/api/verification", { method: "POST", body: { domain }, signal });
-}
-
-export function checkVerification(verificationId, { signal } = {}) {
-  return request(`/api/verification/${verificationId}/check`, { method: "POST", signal });
 }
 
 export function createScan(domain, { signal } = {}) {
