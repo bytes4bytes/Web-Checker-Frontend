@@ -3,10 +3,10 @@
 React + Vite + Tailwind frontend for SafeScan SA. The design system, components, and
 interaction patterns are carried over from **CyberCheck** (an earlier Bytes4Bytes project) —
 see `src/lib/theme.js` for the exact colors/severity styling. It talks to
-[Web-Checker-Backend](https://github.com/bytes4bytes/Web-Checker-Backend), which is a
-different backend than CyberCheck's: notably, **this backend requires DNS domain-control
-verification before a scan can run** (CyberCheck's does not). See `src/components/VerifyStep.jsx`
-and `src/App.jsx` for that added step.
+[Web-Checker-Backend](https://github.com/bytes4bytes/Web-Checker-Backend). That backend also
+exposes DNS domain-control verification (`/api/verification`), but scanning doesn't require it -
+a deliberate product decision (see the backend's `docs/security.md`) - so this frontend never
+calls it: submitting a domain goes straight to scanning, same as CyberCheck's own flow.
 
 ## Local development
 
@@ -25,17 +25,14 @@ unless you also update the backend's `CORS_ALLOWED_ORIGINS`), run
 
 ## Architecture
 
-- **`src/lib/api.js`** — talks to the Flask backend. Verification is create-then-poll
-  (`createVerification` → `checkVerification`), and scans are async
-  (`createScan` → `pollScan`, since the backend runs scans on a background worker, not
-  synchronously like CyberCheck's).
+- **`src/lib/api.js`** — talks to the Flask backend. Scans are async (`createScan` →
+  `pollScan`), since the backend runs them on a background worker, not synchronously like
+  CyberCheck's.
 - **`src/lib/transform.js`** — the only file that knows both shapes: reshapes the backend's
   `GET /api/scans/<id>` response (field names `summary`/`why_it_matters`/`recommendation`/
   `technical_fix`) into the prop shape every component below expects (`what`/`why`/`fix`,
   grouped into `categories` with per-category scores). Every UI component is unmodified
   CyberCheck code operating on this transformed shape.
-- **`src/components/VerifyStep.jsx`** — the one genuinely new screen: shows the DNS TXT
-  record to add and lets the user trigger a check.
 - Report sharing (`?report=<token>` in the URL) and PDF download both hit the backend's real
   endpoints (`POST /api/scans/<id>/shares`, `GET /api/scans/<id>/report.pdf` /
   `GET /api/reports/<token>/pdf`) — not client-side `window.print()` or a bare copied URL like
