@@ -245,6 +245,7 @@ export default function App() {
               result={result}
               onRescan={shareToken ? null : () => runScan(result.domain)}
               onShare={handleShare}
+              onBack={reset}
               pdfUrl={shareToken ? sharedReportPdfUrl(shareToken) : reportPdfUrl(result.scan_id)}
             />
           )}
