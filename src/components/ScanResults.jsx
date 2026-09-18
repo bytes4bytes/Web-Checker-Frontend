@@ -26,7 +26,7 @@ function writeLastScan(domain, snapshot) {
   }
 }
 
-export default function ScanResults({ result, onRescan, onShare, pdfUrl }) {
+export default function ScanResults({ result, onRescan, onShare, onBack, pdfUrl }) {
   const {
     domain,
     scanned_at,
@@ -86,6 +86,28 @@ export default function ScanResults({ result, onRescan, onShare, pdfUrl }) {
 
   return (
     <div className="mx-auto mt-8 max-w-4xl space-y-8 cc-fade-in">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-600 transition hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+            aria-hidden="true"
+          >
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+          Back to home
+        </button>
+      )}
+
       <ScoreHero
         domain={domain}
         score={score}
