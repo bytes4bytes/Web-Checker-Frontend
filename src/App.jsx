@@ -5,14 +5,11 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import ScanProgress from "./components/ScanProgress";
 import ScanResults from "./components/ScanResults";
 import ToastHost from "./components/ToastHost";
-import VerifyStep from "./components/VerifyStep";
 import WhatWeCheck from "./components/WhatWeCheck";
 import {
   ApiError,
-  checkVerification,
   createScan,
   createShare,
-  createVerification,
   getSharedReport,
   isValidDomain,
   normalizeDomain,
@@ -49,9 +46,8 @@ function apiErrorMessage(err) {
 }
 
 export default function App() {
-  // idle -> verifying -> checking -> scanning -> done
+  // idle -> scanning -> done
   const [phase, setPhase] = useState("idle");
-  const [verification, setVerification] = useState(null);
   const [result, setResult] = useState(null);
   const [shareToken, setShareToken] = useState(null); // set only when viewing someone else's shared report
   const [error, setError] = useState("");
@@ -91,10 +87,29 @@ export default function App() {
     }
   }
 
-  const beginScan = useCallback(
-    async (domain, controller) => {
+  // No domain-verification step: SafeScan's backend queues a scan for any valid public
+  // domain with no proof of control (a deliberate product decision - see the backend's
+  // README/docs/security.md for the trade-off). app/verification/ still exists on the
+  // backend and works end to end; this frontend just doesn't call it.
+  const runScan = useCallback(
+    async (rawDomain) => {
+      const domain = normalizeDomain(rawDomain);
+      if (!isValidDomain(domain)) {
+        setError("That doesn't look like a valid domain. Try something like example.co.za");
+        return;
+      }
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setError("");
+      setResult(null);
+      setShareToken(null);
       lastScannedRef.current = domain;
       setPhase("scanning");
+      updateUrl({ domain });
+
       try {
         const scan = await createScan(domain, { signal: controller.signal });
         const final = await pollScan(scan.scan_id, { signal: controller.signal });
@@ -105,104 +120,19 @@ export default function App() {
           return;
         }
         setResult(transformScan(final));
-        setShareToken(null);
         setPhase("done");
         remember(domain);
       } catch (err) {
         if (err.name === "AbortError") return;
-        // A domain whose verification lapsed (or was never done) hits this
-        // 403 - fold straight back into the verify flow instead of just
-        // showing an error, so "Re-scan" on a stale domain still works.
-        if (err instanceof ApiError && err.status === 403) {
-          setPhase("idle");
-          startVerification(domain);
-          return;
-        }
-        setError(err instanceof ApiError ? apiErrorMessage(err) : "Could not reach the scanner. Please check your connection and try again.");
+        setError(
+          err instanceof ApiError
+            ? apiErrorMessage(err)
+            : "Could not reach the scanner. Please check your connection and try again."
+        );
         setPhase("idle");
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
     [remember]
-  );
-
-  const startVerification = useCallback(async (rawDomain) => {
-    const domain = normalizeDomain(rawDomain);
-    if (!isValidDomain(domain)) {
-      setError("That doesn't look like a valid domain. Try something like example.co.za");
-      return;
-    }
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setError("");
-    setResult(null);
-    setShareToken(null);
-    setPhase("verifying");
-    updateUrl({ domain });
-
-    try {
-      const v = await createVerification(domain, { signal: controller.signal });
-      if (controller.signal.aborted) return;
-      setVerification(v);
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      setError(err instanceof ApiError ? apiErrorMessage(err) : "Could not reach the scanner. Please check your connection and try again.");
-      setPhase("idle");
-    }
-  }, []);
-
-  const handleCheckVerification = useCallback(async () => {
-    if (!verification) return;
-    setPhase("checking");
-    setError("");
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const updated = await checkVerification(verification.verification_id, { signal: controller.signal });
-      if (controller.signal.aborted) return;
-
-      if (updated.status === "verified") {
-        await beginScan(updated.domain, controller);
-      } else if (updated.status === "expired") {
-        setError("This verification request expired. Start again with your domain.");
-        setVerification(null);
-        setPhase("idle");
-      } else {
-        setError(
-          updated.last_check_result === "TEMPORARY_DNS_ERROR"
-            ? "DNS lookup failed temporarily. Try again in a moment."
-            : "We couldn't find that DNS record yet. Add it, wait a little for DNS to propagate, then try again."
-        );
-        // POST /api/verification/<id>/check's response has no dns_record
-        // field (only the initial create response does) - merge onto the
-        // existing verification instead of replacing it, or the DNS record
-        // shown in VerifyStep disappears from under it.
-        setVerification((prev) => ({ ...prev, ...updated }));
-        setPhase("verifying");
-      }
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      setError(err instanceof ApiError ? apiErrorMessage(err) : "Could not reach the scanner. Please check your connection and try again.");
-      setPhase("verifying");
-    }
-  }, [verification, beginScan]);
-
-  const rescan = useCallback(
-    (domain) => {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setError("");
-      setResult(null);
-      setShareToken(null);
-      beginScan(domain, controller);
-    },
-    [beginScan]
   );
 
   const loadSharedReport = useCallback(async (token) => {
@@ -235,7 +165,7 @@ export default function App() {
     if (reportToken) {
       loadSharedReport(reportToken);
     } else if (d && d !== lastScannedRef.current) {
-      startVerification(d);
+      runScan(d);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -244,7 +174,6 @@ export default function App() {
     abortRef.current?.abort();
     abortRef.current = null;
     setPhase("idle");
-    setVerification(null);
     setError("");
   }, []);
 
@@ -256,7 +185,6 @@ export default function App() {
   }
 
   const busy = phase === "scanning";
-  const showForm = phase === "idle" || busy;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f7f7f5] via-[#f7f7f5] to-white text-gray-900">
@@ -295,19 +223,13 @@ export default function App() {
               <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-gray-600">
                 Run a free, non-invasive external scan. Get prioritised findings written in
                 plain English — plus the exact questions to ask your developer or hosting
-                provider. You'll verify technical control of your domain first.
+                provider.
               </p>
             </section>
           )}
 
-          {showForm && (
-            <DomainForm
-              onSubmit={startVerification}
-              busy={busy}
-              recent={recent}
-              onPick={(d) => rescan(normalizeDomain(d))}
-              onCancel={cancel}
-            />
+          {phase !== "done" && (
+            <DomainForm onSubmit={runScan} busy={busy} recent={recent} onPick={runScan} onCancel={cancel} />
           )}
 
           {error && (
@@ -316,23 +238,12 @@ export default function App() {
             </p>
           )}
 
-          {(phase === "verifying" || phase === "checking") && verification && (
-            <VerifyStep
-              domain={verification.domain}
-              dnsRecord={verification.dns_record}
-              checking={phase === "checking"}
-              onCheck={handleCheckVerification}
-              onBack={cancel}
-              onCancel={cancel}
-            />
-          )}
-
           {phase === "scanning" && lastScannedRef.current && <ScanProgress domain={lastScannedRef.current} />}
 
           {phase === "done" && result && (
             <ScanResults
               result={result}
-              onRescan={shareToken ? null : () => rescan(result.domain)}
+              onRescan={shareToken ? null : () => runScan(result.domain)}
               onShare={handleShare}
               pdfUrl={shareToken ? sharedReportPdfUrl(shareToken) : reportPdfUrl(result.scan_id)}
             />
